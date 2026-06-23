@@ -159,23 +159,48 @@ def format_date_column(series: pd.Series) -> pd.Series:
 
 def extract_month_only_column(series: pd.Series) -> pd.Series:
     """Extract month (MM) from a formatted date string like DD.MM.YYYY."""
+    # Force to plain python strings first so split() never produces a
+    # numeric/NaN (float64) column when a value doesn't have the expected
+    # number of '.'-separated parts.
     s = series.astype(str).str.strip()
     empty_mask = s.eq("") | s.str.lower().isin(["nan", "none"])
-    
-    # Split on '.' and extract index 1 (MM)
+
     parts = s.str.split(".")
-    result = parts.str[1]
+
+    def _get_month(p):
+        if isinstance(p, list) and len(p) >= 2:
+            return p[1]
+        return ""
+
+    result = parts.apply(_get_month)
+    result = result.astype(str)
     result.loc[empty_mask] = ""
     return result
 
 
 def extract_month_year_column(series: pd.Series) -> pd.Series:
     """Extract MM.YYYY from a formatted date string like DD.MM.YYYY."""
+    # NOTE: previously this used parts.str[1] + "." + parts.str[2], which
+    # returns NaN (and can silently degrade the whole column to float64)
+    # whenever a row doesn't split into at least 3 parts - e.g. an empty
+    # string, or a date that format_date_column couldn't parse and left
+    # as raw/partial text. Concatenating "." (a str) with a float64 NaN
+    # column then raises:
+    #   ufunc 'add' did not contain a loop with signature matching types
+    #   (dtype('float64'), dtype('<U1')) -> None
+    # Building the result row-by-row with plain Python avoids that.
     s = series.astype(str).str.strip()
     empty_mask = s.eq("") | s.str.lower().isin(["nan", "none"])
-    
+
     parts = s.str.split(".")
-    result = parts.str[1] + "." + parts.str[2]
+
+    def _get_month_year(p):
+        if isinstance(p, list) and len(p) >= 3:
+            return f"{p[1]}.{p[2]}"
+        return ""
+
+    result = parts.apply(_get_month_year)
+    result = result.astype(str)
     result.loc[empty_mask] = ""
     return result
 
