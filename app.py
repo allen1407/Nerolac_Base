@@ -157,24 +157,25 @@ def format_date_column(series: pd.Series) -> pd.Series:
     return result.fillna("")
 
 
-def last7_with_dash_to_dot(value):
-    """Replace '-' / en-dash '–' with '.' then take the last 7 characters."""
-    if value is None:
-        return ""
-    s = str(value).strip()
-    if s == "" or s.lower() in ("nan", "none"):
-        return ""
-    s = s.replace("\u2013", ".").replace("-", ".")
-    return s[-7:] if len(s) >= 7 else s
-
-
-def last7_with_dash_to_dot_column(series: pd.Series) -> pd.Series:
-    """Vectorized version of last7_with_dash_to_dot for an entire column."""
+def extract_month_only_column(series: pd.Series) -> pd.Series:
+    """Extract month (MM) from a formatted date string like DD.MM.YYYY."""
     s = series.astype(str).str.strip()
     empty_mask = s.eq("") | s.str.lower().isin(["nan", "none"])
-    s = s.str.replace("\u2013", ".", regex=False).str.replace("-", ".", regex=False)
-    result = s.str[-7:]
-    result = result.where(s.str.len() >= 7, s)
+    
+    # Split on '.' and extract index 1 (MM)
+    parts = s.str.split(".")
+    result = parts.str[1]
+    result.loc[empty_mask] = ""
+    return result
+
+
+def extract_month_year_column(series: pd.Series) -> pd.Series:
+    """Extract MM.YYYY from a formatted date string like DD.MM.YYYY."""
+    s = series.astype(str).str.strip()
+    empty_mask = s.eq("") | s.str.lower().isin(["nan", "none"])
+    
+    parts = s.str.split(".")
+    result = parts.str[1] + "." + parts.str[2]
     result.loc[empty_mask] = ""
     return result
 
@@ -223,11 +224,17 @@ def build_base_file(fa_df: pd.DataFrame, manpower_df: pd.DataFrame) -> pd.DataFr
         right_on=MANPOWER_LOOKUP_KEY,
     )
 
+    # --- Format date columns from FA Export if they exist ---
+    date_columns_to_format = ["CREATION_DATE", "SYSTEM_DAY", "DATE_OF_ENTRY_IN_TABLE", "UPDATEDDATE"]
+    for col in date_columns_to_format:
+        if col in merged.columns:
+            merged[col] = format_date_column(merged[col])
+
     # --- Derived columns (no lookup) ---
     merged["User Group"] = merged["USER_NAME"].astype(str).str[:3]
     merged["DOJ"] = format_date_column(merged["DOJ"])
-    merged["DOJ Month"] = last7_with_dash_to_dot_column(merged["DOJ"])
-    merged["Visit Month"] = last7_with_dash_to_dot_column(format_date_column(merged["ACTUAL_DATE"]))
+    merged["DOJ Month"] = extract_month_year_column(merged["DOJ"])  # MM.YYYY
+    merged["Visit Month"] = extract_month_year_column(format_date_column(merged["ACTUAL_DATE"]))  # MM.YYYY
     merged["Business Partner"] = merged["BUSINESS_PARTNER_ROLE"]
     bp_blank_mask = merged["Business Partner"].isna() | (merged["Business Partner"].astype(str).str.strip() == "")
     merged.loc[bp_blank_mask, "Business Partner"] = "0"
